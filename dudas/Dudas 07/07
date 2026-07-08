@@ -1,0 +1,37 @@
+Debería de correr este proyecto en el servidor con ollama para que surta efecto?
+
+Esa es la pregunta del millón en arquitectura de software. La respuesta corta es: Sí, a largo plazo el objetivo es que viva en el servidor, pero durante esta fase de creación te conviene ejecutarlo en tu ordenador local.
+
+Como tu objetivo final es un "Compilador Nocturno" (algo que trabaje mientas tú duermes y tienes tu ordenador principal apagado), el servidor Ubuntu es el lugar perfecto para alojarlo. Sin embargo, el ciclo de vida de este proyecto debería tener dos fases distintas.
+
+Aquí tienes cómo deberías enfocarlo para trabajar cómodamente sin volverte loco con errores de conexión:
+
+Fase 1: Entorno de Desarrollo (Tu ordenador con VS Code)
+Ahora mismo estás programando, haciendo pruebas y viendo si la IA responde bien. Debes ejecutar el script (python -m src.main) en tu ordenador local.
+
+Para que esto funcione si Ollama y CouchDB están en el servidor Ubuntu, tienes que ajustar tu archivo .env local para que apunte a las IPs de tu servidor en lugar de a localhost.
+
+Tus variables en el .env local deberían verse más o menos así:
+
+Fragmento de código
+# En lugar de localhost, usas la IP de tu servidor Ubuntu
+OLLAMA_URL=http://192.168.X.X:11434/api/generate
+COUCHDB_URL=http://admin:pass@192.168.X.X:5984
+Aviso importante sobre Ollama: Por defecto, Ollama por seguridad solo escucha peticiones de la misma máquina (localhost). Para que Ollama en tu servidor Ubuntu acepte peticiones desde tu VS Code, debes configurar Ollama en el servidor con la variable de entorno OLLAMA_HOST=0.0.0.0.
+
+Fase 2: Entorno de Producción (Servidor Ubuntu)
+Una vez que el código funciona perfectamente en tu VS Code, no falla, y los resultados te gustan, es hora de pasarlo a producción.
+
+Haces un git push desde tu ordenador a GitHub.
+
+Entras por SSH a tu servidor Ubuntu y haces un git pull para descargar el código final.
+
+Allí configuras un .env donde todo apunte a localhost (porque ahora el script, Ollama y la base de datos están todos viviendo juntos en la misma máquina).
+
+Configuras un Cron Job (una tarea programada en Linux) para que ejecute tu orquestador Python automáticamente todos los días a las 3:00 AM.
+
+En resumen
+Trabaja en local (VS Code) apuntando por red a los servicios del servidor. Cuando el código sea estable, súbelo al servidor y automatízalo.
+
+Para asegurarnos de configurar bien las conexiones ahora mismo: ¿Ollama lo tienes instalado y corriendo en ese servidor Ubuntu, o lo habías instalado en tu ordenador personal para hacer las primeras pruebas?
+
