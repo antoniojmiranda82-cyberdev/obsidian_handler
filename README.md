@@ -1,153 +1,142 @@
-Este sistema implementa un patrón de arquitectura avanzado conocido como **"Compilador Nocturno"** para la gestión del conocimiento personal (segundo cerebro). Su objetivo es automatizar la limpieza, el formateo y la atomización de notas rápidas o desorganizadas que hayas guardado en tu bandeja de entrada de **Obsidian** durante el día, utilizando Inteligencia Artificial local (**Ollama**) mientras no estás usando el ordenador.
+# 🌙 Compilador Nocturno (Segundo Cerebro impulsado por MCP y Ollama)
 
-A continuación, encontrarás la explicación detallada de su arquitectura, funcionamiento y los pasos exactos para reproducir este entorno en tu máquina.
+Este sistema implementa un patrón de arquitectura avanzado conocido como **"Compilador Nocturno"** para la gestión del conocimiento personal. Su objetivo es automatizar la limpieza, formateo y atomización de notas rápidas o desorganizadas que se han guardado en la bandeja de entrada de **Obsidian** durante el día, utilizando Inteligencia Artificial local (**Ollama**) de forma autónoma.
+
+Este proyecto unifica en un solo repositorio el **Orquestador (Python)** y el **Servidor de Base de Datos (Node.js / TypeScript)** usando el estándar **Model Context Protocol (MCP)**.
 
 ---
 
-# Arquitectura y Procesos de Alto Nivel
+## 🏗️ Arquitectura del Sistema
 
-El sistema se compone de tres piezas de software principales que se comunican entre sí en tiempo real:
+El sistema se compone de tres piezas de software principales que se comunican entre sí en tiempo real de forma local, garantizando privacidad absoluta:
 
-```
-[ Orquestador Python ] <--- (JSON-RPC via Pipes) ---> [ Servidor MCP Node.js ] <---> [ CouchDB (Vault Obsidian) ]
+```text
+[ Orquestador Python ] <--- (JSON-RPC via stdio) ---> [ Servidor MCP Node.js ] <---> [ CouchDB (Vault Obsidian) ]
          |
          +------------------- (API HTTP Local) -------> [ Ollama (Qwen 2.5) ]
 
 ```
 
-1. **El Orquestador (Script Python):** Es el cerebro lógico del flujo. Se encarga de iniciar el servidor secundario, coordinar la lectura de archivos, enviar los textos a la IA y ordenar la creación de las notas finales procesadas.
-2. **El Servidor MCP (Script Node.js):** Utiliza el protocolo **Model Context Protocol (MCP)** desarrollado por Anthropic. Funciona como un puente o traductor. Expone "herramientas" estándar (`list_files_in_dir`, `get_file_contents`, `Notes`) para que el script de Python pueda manipular el contenido de Obsidian sin necesidad de interactuar directamente con archivos locales.
-3. **La Base de Datos (CouchDB):** Es el motor de almacenamiento. Obsidian suele sincronizarse con CouchDB mediante plugins como *Self-Hosted LiveSync*. El servidor MCP lee y escribe las notas directamente en CouchDB usando las credenciales guardadas en el archivo `.env`.
-4. **El Motor de IA (Ollama):** Ejecuta localmente el modelo de lenguaje de código abierto (`qwen2.5:14b`) para reestructurar las notas siguiendo las reglas estrictas de un archivo de plantilla (`SCHEMA.md`).
+1. **El Orquestador (`python_src/`):** Script de Python que inicia el flujo. Levanta el servidor MCP en segundo plano, coordina la lectura de la bandeja de entrada, envía el texto a la IA y ordena la creación de las notas procesadas.
+2. **El Servidor MCP (`src/` compilado a `dist/`):** Desarrollado en TypeScript. Actúa como traductor exponiendo herramientas estándar (`list_files_in_dir`, `get_file_contents`, `Notes`) para que Python interactúe con la base de datos sin tocar directamente los archivos.
+3. **Base de Datos (CouchDB):** El motor de almacenamiento sincronizado con Obsidian (vía *Self-Hosted LiveSync*).
+4. **Motor de IA (Ollama):** Ejecuta el modelo de lenguaje de código abierto (`qwen2.5:14b`) siguiendo las reglas estrictas definidas en un archivo `SCHEMA.md`.
 
 ---
 
-# Tecnologías y Librerías Utilizadas
+## 📂 Estructura del Proyecto
 
-### En el script de Python:
-
-* **`subprocess`:** Una librería nativa de Python que permite ejecutar comandos del sistema operativo. Se usa para levantar y controlar el proceso de Node.js en segundo plano.
-* **`urllib.request`:** Módulo nativo para realizar peticiones de red HTTP. Se utiliza para enviar los textos al endpoint local de Ollama de forma directa y limpia, sin depender de librerías externas como `requests`.
-* **`json`:** Para serializar (convertir a texto) y deserializar (convertir a objetos de Python) los mensajes del protocolo JSON-RPC y las respuestas de la IA.
-* **`os` y `time`:** Para gestionar rutas de archivos y pausar la ejecución del código de manera controlada (esperar a que el servidor de Node se inicialice correctamente).
-
-### En el servidor MCP (Node.js):
-
-* **`child_process` (módulo `spawn`):** Utilizado en el script de prueba para instanciar el servidor en un entorno controlado.
-* **Protocolo JSON-RPC 2.0:** No es una librería, sino un estándar de comunicación basado en texto plano a través de los canales estándar de comunicación del sistema: la entrada estándar (`stdin`) y la salida estándar (`stdout`).
-
----
-
-# Funcionamiento Paso a Paso del Código
-
-### 1. El apretón de manos (Handshake MCP)
-
-Cuando ejecutas el script de Python, este lanza el comando `node dist/index.cjs`. Como ambos procesos necesitan entenderse, realizan un proceso de inicialización mediante un formato estructurado llamado **JSON-RPC**.
-El cliente (Python) envía un mensaje indicando su versión y protocolo (`initialize`), y el servidor responde confirmando sus capacidades.
-
-### 2. Extracción de directrices (`SCHEMA.md`)
-
-El script de Python le solicita al servidor MCP que busque y lea un archivo llamado `SCHEMA.md`. Este archivo contiene las instrucciones de diseño y estructura que la IA debe adoptar de forma obligatoria (por ejemplo: *"Toda nota debe tener un título en mayúsculas, una sección de etiquetas y un resumen de 3 puntos"*).
-
-### 3. Escaneo de la Bandeja de Entrada (`01 - Inbox`)
-
-El script solicita la lista de todos los elementos dentro de la carpeta configurada como Inbox. El servidor MCP consulta CouchDB y devuelve un listado con las notas pendientes de procesar.
-
-### 4. Filtrado de seguridad y prevención de bucles infinitos
-
-El código recorre la lista de notas una por una y realiza dos comprobaciones críticas:
-
-* Ignora las carpetas (rutas que terminan en `/`).
-* Lee el contenido de la nota y busca la cadena `"status/propuesta-ia"`. Si la nota ya contiene este texto, **la ignora**. Esto evita que el script procese una nota que ya fue optimizada en una ejecución anterior, previniendo un bucle sin fin de consumo de recursos.
-
-### 5. Compilación con Inteligencia Artificial (Ollama)
-
-Si la nota es válida, se extrae su contenido en bruto y se envía a la API local de Ollama. Se le concatena el contenido del `SCHEMA.md` bajo el rol de `system_prompt` para forzar a la IA a no generar saludos ni introducciones introductorias, devolviendo estrictamente la nota estructurada.
-
-### 6. Inyección de la propuesta en Obsidian
-
-Una vez que Ollama responde con el texto optimizado, Python le ordena al servidor MCP crear un nuevo archivo con el prefijo `propuesta-` dentro de la bandeja de entrada, resguardando la nota original intacta para que el usuario pueda validar el cambio al día siguiente.
-
----
-
-# Guía para Reproducir el Entorno desde Cero
-
-Sigue estos pasos detallados para montar este sistema en tu propio ordenador:
-
-### Paso 1: Prerrequisitos de Software
-
-Asegúrate de tener instalado lo siguiente en tu sistema:
-
-1. **Python 3.10 o superior.**
-2. **Node.js (versión LTS recomendada).**
-3. **Ollama:** Descárgalo de su sitio oficial, ejecútalo en tu terminal y descarga el modelo del script corriendo:
-```bash
-ollama run qwen2.5:14b
-
-```
-
-
-4. **Instancia de CouchDB:** Ya sea local o en la nube, donde se sincronice tu vault de Obsidian.
-
-### Paso 2: Estructura del Proyecto
-
-Crea una carpeta para el proyecto con la siguiente estructura de archivos:
+El proyecto está diseñado para separar claramente las responsabilidades del puente de conexión y la lógica de inteligencia artificial:
 
 ```text
-mi-segundo-cerebro-mcp/
-├── .env                  # Credenciales de CouchDB
-├── compiler.py           # Código de Python provisto
-├── SCHEMA.md             # Instrucciones de formato para la IA
-├── dist/
-│   └── index.cjs         # Servidor MCP compilado (Node.js)
-└── 01 - Inbox/           # Carpeta simulada o vinculada de entrada
+Nocturnal-Compiler/
+├── .env                  # (IGNORADO POR GIT) Credenciales y URLs.
+├── SCHEMA.md             # Instrucciones y estructura estricta para la IA.
+│
+# --- LADO NODE.JS (Servidor MCP) ---
+├── src/                  # Código fuente en TypeScript del puente MCP.
+├── lib/                  # Utilidades y submódulos del servidor.
+├── package.json          # Dependencias de Node.js.
+├── tsconfig.json         # Configuración de TypeScript.
+├── vite.config.ts        # Planos de construcción para compilar a JavaScript.
+├── dist/                 # (AUTOGENERADO) Carpeta con el index.cjs compilado.
+│
+# --- LADO PYTHON (Orquestador) ---
+├── python_src/           # Lógica principal de ejecución.
+│   ├── main.py           # Bucle principal e inicializador.
+│   ├── config.py         # Variables globales.
+│   ├── mcp_client.py     # Gestor del subproceso Node y JSON-RPC.
+│   └── llm_client.py     # Conexión directa con la API de Ollama.
+└── requirements.txt      # Dependencias de Python (ej. python-dotenv).
 
 ```
-
-### Paso 3: Configurar las Variables de Entorno (`.env`)
-
-El archivo `.env` debe estar en la raíz del proyecto Node.js para que el servidor pueda autenticarse contra CouchDB. Crea el archivo e introduce tus datos de acceso:
-
-```env
-COUCHDB_URL=http://admin:tu_contraseña_secreta@127.0.0.1:5984
-COUCHDB_DB_NAME=tu_base_de_datos_obsidian
-
-```
-
-### Paso 4: Crear el esquema de diseño (`SCHEMA.md`)
-
-Crea un archivo llamado `SCHEMA.md` en la raíz. Este archivo guiará la transformación del contenido. Ejemplo de contenido:
-
-```markdown
-# PLANTILLA DE CONOCIMIENTO ATÓMICO
-- **Concepto Principal:** [Definición clara en una frase]
-- **Categoría:** #conocimiento/[área]
-- **Puntos Clave:**
-  - 
-- **Acciones / Siguientes Pasos:** [Si aplica]
-
-```
-
-### Paso 5: Ejecución y Pruebas
-
-1. Pon una nota de prueba desorganizada en la carpeta `01 - Inbox/nota_rapida.md`.
-2. Primero, puedes asegurarte de que el servidor MCP responde al protocolo básico ejecutando el script de test de Node:
-```bash
-node test-mcp.js
-
-```
-
-
-*Deberías ver una respuesta en consola que incluya la confirmación del formato JSON-RPC.*
-3. Ejecuta el compilador principal en Python:
-```bash
-python compiler.py
-
-```
-
-
-4. Revisa tu carpeta `01 - Inbox/`. Verás aparecer un nuevo archivo llamado `propuesta-nota_rapida.md` perfectamente ordenado por la IA local.
 
 ---
 
-Para ayudarte a comprender cómo interactúan de manera exacta estos procesos mediante el protocolo de comunicación en segundo plano, he preparado el siguiente simulador interactivo de la arquitectura MCP. Puedes avanzar por las distintas fases de ejecución para observar los mensajes JSON-RPC nativos que se transfieren entre el script y el servidor de base de datos.
+## ⚙️ Flujo Lógico de Ejecución
+
+1. **Handshake MCP:** Python ejecuta el archivo compilado `dist/index.cjs` e inicializa la comunicación por JSON-RPC 2.0.
+2. **Lectura de Directrices:** Se extrae el contenido de `SCHEMA.md` que servirá como *System Prompt* para la IA.
+3. **Escaneo de Bandeja (Inbox):** El servidor MCP consulta CouchDB y devuelve un listado de notas.
+4. **Filtro Anti-Bucles:** Se ignora cualquier nota que ya contenga la cadena `"status/propuesta-ia"`.
+5. **Procesamiento de IA:** El contenido de las notas pendientes se envía a Ollama localmente.
+6. **Inyección en Obsidian:** Python ordena al servidor MCP guardar la respuesta de Ollama como una nota nueva prefijada con `propuesta-`, dejando la original intacta para validación humana.
+
+---
+
+## 🚀 Guía de Instalación y Despliegue
+
+### Prerrequisitos Globales
+
+* **Node.js** (v18 o superior).
+* **Python 3.10** o superior.
+* **Ollama** con el modelo descargado: `ollama run qwen2.5:14b`.
+* **CouchDB** corriendo y accesible.
+
+### Paso 1: Clonar y Configurar Entorno
+
+```bash
+git clone https://github.com/maortegam/obsidian_handler.git
+cd obsidian_handler
+
+```
+
+Crea el archivo `.env` en la raíz del proyecto (nunca lo subas al repositorio):
+
+```env
+# Ejemplo para un entorno local/servidor unificado:
+hostname=https://your.domain.com
+dbname=obsidian_vault
+db_username=username
+db_password=password 
+e2ee_passphrase=passphrase 
+mcpTransport=stdio
+```
+
+Asegúrate de crear tu archivo `SCHEMA.md` en la raíz con la estructura en formato Markdown que deseas que la IA siga.
+
+### Paso 2: Compilar el Servidor Node.js (MCP)
+
+Dado que la carpeta `dist/` no se incluye en el control de versiones, debes compilar el puente en la máquina destino:
+
+```bash
+npm install
+npm run build
+
+```
+
+*Esto generará el archivo crítico `dist/index.cjs`.*
+
+### Paso 3: Preparar el Entorno de Python
+
+Se recomienda el uso de entornos virtuales para no interferir con las librerías del sistema:
+
+```bash
+# Crear y activar entorno virtual (Linux/Mac)
+python3 -m venv venv
+source venv/bin/activate
+
+# Instalar dependencias
+pip install -r requirements.txt
+
+```
+
+### Paso 4: Ejecución
+
+Con el entorno virtual activado y la compilación terminada, lanza el orquestador como un módulo de Python para mantener correctamente las rutas relativas:
+
+```bash
+python3 -m python_src.main
+
+```
+
+Si todo es correcto, verás el registro en consola indicando la conexión, lectura del `SCHEMA.md`, procesamiento de notas e inyección en CouchDB.
+
+---
+
+## 🛠️ Solución de Problemas Comunes
+
+* **`ModuleNotFoundError: No module named 'python_src'`**: Estás intentando ejecutar el archivo directamente (`python main.py`). Debes ejecutarlo como módulo desde la raíz del proyecto usando `python -m python_src.main`.
+* **El código termina inmediatamente sin imprimir nada**: Verifica que no haya un error de sintaxis silenciado o que la compilación de Node haya fallado dejando `dist/index.cjs` vacío.
+* **`ModuleLoader.loadEntryModule` / `ENOENT` durante `npm run build**`: Asegúrate de haber clonado correctamente el repositorio incluyendo sus submódulos o carpetas anidadas (`lib/`).
+* **Conflictos de Git con `.env` al hacer `git pull**`: Ejecuta `git stash` para guardar temporalmente tu `.env` local, haz el `pull` y luego restáuralo. Para evitar esto, cerciórate de que `.env` está dentro de `.gitignore`.

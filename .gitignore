@@ -3,7 +3,7 @@
 
 # Ignorar la carpeta de compilación de Node
 node_modules/
-
+dist/
 # Ignorar archivos temporales o de caché de Python
 __pycache__/
 *.pyc
