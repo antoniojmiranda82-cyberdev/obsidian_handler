@@ -1,142 +1,153 @@
-# 🌙 Compilador Nocturno (Segundo Cerebro impulsado por MCP y Ollama)
+# 🌙 Obsidian + Ollama Local Memory Bridge
 
-Este sistema implementa un patrón de arquitectura avanzado conocido como **"Compilador Nocturno"** para la gestión del conocimiento personal. Su objetivo es automatizar la limpieza, formateo y atomización de notas rápidas o desorganizadas que se han guardado en la bandeja de entrada de **Obsidian** durante el día, utilizando Inteligencia Artificial local (**Ollama**) de forma autónoma.
+This repository connects an Obsidian vault synchronized through Self-Hosted LiveSync/CouchDB to local Ollama models through Model Context Protocol (MCP).
 
-Este proyecto unifica en un solo repositorio el **Orquestador (Python)** y el **Servidor de Base de Datos (Node.js / TypeScript)** usando el estándar **Model Context Protocol (MCP)**.
+For the Asset Ave + Dream Blvd operator, it is intentionally kept as a separate local service. The operator talks to the authenticated MCP HTTP transport, while Ollama and vault credentials stay on the local machine.
 
----
-
-## 🏗️ Arquitectura del Sistema
-
-El sistema se compone de tres piezas de software principales que se comunican entre sí en tiempo real de forma local, garantizando privacidad absoluta:
+## Architecture
 
 ```text
-[ Orquestador Python ] <--- (JSON-RPC via stdio) ---> [ Servidor MCP Node.js ] <---> [ CouchDB (Vault Obsidian) ]
-         |
-         +------------------- (API HTTP Local) -------> [ Ollama (Qwen 2.5) ]
-
+Asset/Dream Operator
+        |
+        | authenticated Streamable HTTP MCP
+        v
+obsidian_handler (localhost:3100)
+        |
+        +--> CouchDB / Self-Hosted LiveSync / Obsidian
+        |
+        `--> Python compiler --> Ollama (localhost:11434)
 ```
 
-1. **El Orquestador (`python_src/`):** Script de Python que inicia el flujo. Levanta el servidor MCP en segundo plano, coordina la lectura de la bandeja de entrada, envía el texto a la IA y ordena la creación de las notas procesadas.
-2. **El Servidor MCP (`src/` compilado a `dist/`):** Desarrollado en TypeScript. Actúa como traductor exponiendo herramientas estándar (`list_files_in_dir`, `get_file_contents`, `Notes`) para que Python interactúe con la base de datos sin tocar directamente los archivos.
-3. **Base de Datos (CouchDB):** El motor de almacenamiento sincronizado con Obsidian (vía *Self-Hosted LiveSync*).
-4. **Motor de IA (Ollama):** Ejecuta el modelo de lenguaje de código abierto (`qwen2.5:14b`) siguiendo las reglas estrictas definidas en un archivo `SCHEMA.md`.
+The Python compiler is scoped by default to `Projects/asset-dream`. It reads raw notes, sends them to Ollama, and creates new `propuesta-*` notes instead of overwriting originals.
 
----
+## Default Ollama Models
 
-## 📂 Estructura del Proyecto
+- Chat / local worker: `llama3.2:1b`
+- Embeddings: `mxbai-embed-large:latest`
 
-El proyecto está diseñado para separar claramente las responsabilidades del puente de conexión y la lógica de inteligencia artificial:
+Both model names and all Ollama URLs are environment configurable.
 
-```text
-Nocturnal-Compiler/
-├── .env                  # (IGNORADO POR GIT) Credenciales y URLs.
-├── SCHEMA.md             # Instrucciones y estructura estricta para la IA.
-│
-# --- LADO NODE.JS (Servidor MCP) ---
-├── src/                  # Código fuente en TypeScript del puente MCP.
-├── lib/                  # Utilidades y submódulos del servidor.
-├── package.json          # Dependencias de Node.js.
-├── tsconfig.json         # Configuración de TypeScript.
-├── vite.config.ts        # Planos de construcción para compilar a JavaScript.
-├── dist/                 # (AUTOGENERADO) Carpeta con el index.cjs compilado.
-│
-# --- LADO PYTHON (Orquestador) ---
-├── python_src/           # Lógica principal de ejecución.
-│   ├── main.py           # Bucle principal e inicializador.
-│   ├── config.py         # Variables globales.
-│   ├── mcp_client.py     # Gestor del subproceso Node y JSON-RPC.
-│   └── llm_client.py     # Conexión directa con la API de Ollama.
-└── requirements.txt      # Dependencias de Python (ej. python-dotenv).
+## Requirements
 
-```
+- Node.js 20+
+- Python 3.10+
+- Ollama running locally
+- CouchDB connected to Obsidian through Self-Hosted LiveSync
 
----
+## Windows Setup
 
-## ⚙️ Flujo Lógico de Ejecución
+From PowerShell in the repository folder:
 
-1. **Handshake MCP:** Python ejecuta el archivo compilado `dist/index.cjs` e inicializa la comunicación por JSON-RPC 2.0.
-2. **Lectura de Directrices:** Se extrae el contenido de `SCHEMA.md` que servirá como *System Prompt* para la IA.
-3. **Escaneo de Bandeja (Inbox):** El servidor MCP consulta CouchDB y devuelve un listado de notas.
-4. **Filtro Anti-Bucles:** Se ignora cualquier nota que ya contenga la cadena `"status/propuesta-ia"`.
-5. **Procesamiento de IA:** El contenido de las notas pendientes se envía a Ollama localmente.
-6. **Inyección en Obsidian:** Python ordena al servidor MCP guardar la respuesta de Ollama como una nota nueva prefijada con `propuesta-`, dejando la original intacta para validación humana.
-
----
-
-## 🚀 Guía de Instalación y Despliegue
-
-### Prerrequisitos Globales
-
-* **Node.js** (v18 o superior).
-* **Python 3.10** o superior.
-* **Ollama** con el modelo descargado: `ollama run qwen2.5:14b`.
-* **CouchDB** corriendo y accesible.
-
-### Paso 1: Clonar y Configurar Entorno
-
-```bash
-git clone https://github.com/maortegam/obsidian_handler.git
-cd obsidian_handler
-
-```
-
-Crea el archivo `.env` en la raíz del proyecto (nunca lo subas al repositorio):
-
-```env
-# Ejemplo para un entorno local/servidor unificado:
-hostname=https://your.domain.com
-dbname=obsidian_vault
-db_username=username
-db_password=password 
-e2ee_passphrase=passphrase 
-mcpTransport=stdio
-```
-
-Asegúrate de crear tu archivo `SCHEMA.md` en la raíz con la estructura en formato Markdown que deseas que la IA siga.
-
-### Paso 2: Compilar el Servidor Node.js (MCP)
-
-Dado que la carpeta `dist/` no se incluye en el control de versiones, debes compilar el puente en la máquina destino:
-
-```bash
+```powershell
 npm install
 npm run build
-
+python -m pip install -r requirements.txt
 ```
 
-*Esto generará el archivo crítico `dist/index.cjs`.*
+Copy `.env.example` to `.env` and fill in the local values. Never commit `.env`.
 
-### Paso 3: Preparar el Entorno de Python
-
-Se recomienda el uso de entornos virtuales para no interferir con las librerías del sistema:
-
-```bash
-# Crear y activar entorno virtual (Linux/Mac)
-python3 -m venv venv
-source venv/bin/activate
-
-# Instalar dependencias
-pip install -r requirements.txt
-
+```powershell
+Copy-Item .env.example .env
 ```
 
-### Paso 4: Ejecución
+The Node MCP service expects these important keys:
 
-Con el entorno virtual activado y la compilación terminada, lanza el orquestador como un módulo de Python para mantener correctamente las rutas relativas:
+```env
+hostname=http://127.0.0.1:5984
+dbname=obsidian_vault
+username=YOUR_LOCAL_COUCHDB_USER
+password=YOUR_LOCAL_COUCHDB_PASSWORD
+passphrase=YOUR_LIVESYNC_PASSPHRASE
 
-```bash
-python3 -m python_src.main
+MCP_API_KEY=USE_A_STRONG_LOCAL_TOKEN
+MCP_TRANSPORT=http
+MCP_PORT=3100
 
+OLLAMA_CHAT_MODEL=llama3.2:1b
+OLLAMA_EMBED_MODEL=mxbai-embed-large:latest
+OLLAMA_GENERATE_URL=http://127.0.0.1:11434/api/generate
+OLLAMA_EMBED_URL=http://127.0.0.1:11434/api/embed
+OLLAMA_TAGS_URL=http://127.0.0.1:11434/api/tags
+
+ASSET_DREAM_ROOT=Projects/asset-dream
+OBSIDIAN_INBOX_DIR=01 - Inbox
+OBSIDIAN_SCHEMA_FILE=SCHEMA.md
 ```
 
-Si todo es correcto, verás el registro en consola indicando la conexión, lectura del `SCHEMA.md`, procesamiento de notas e inyección en CouchDB.
+Do not paste passwords, passphrases, or the MCP API key into chat or commit them to GitHub.
 
----
+## Required Obsidian Layout
 
-## 🛠️ Solución de Problemas Comunes
+By default the project memory lives here:
 
-* **`ModuleNotFoundError: No module named 'python_src'`**: Estás intentando ejecutar el archivo directamente (`python main.py`). Debes ejecutarlo como módulo desde la raíz del proyecto usando `python -m python_src.main`.
-* **El código termina inmediatamente sin imprimir nada**: Verifica que no haya un error de sintaxis silenciado o que la compilación de Node haya fallado dejando `dist/index.cjs` vacío.
-* **`ModuleLoader.loadEntryModule` / `ENOENT` durante `npm run build**`: Asegúrate de haber clonado correctamente el repositorio incluyendo sus submódulos o carpetas anidadas (`lib/`).
-* **Conflictos de Git con `.env` al hacer `git pull**`: Ejecuta `git stash` para guardar temporalmente tu `.env` local, haz el `pull` y luego restáuralo. Para evitar esto, cerciórate de que `.env` está dentro de `.gitignore`.
+```text
+Projects/
+└── asset-dream/
+    ├── SCHEMA.md
+    ├── 01 - Inbox/
+    └── Proposals/
+```
+
+The `Proposals` folder is the safe write area for the operator. Existing notes are not automatically overwritten.
+
+## Start the MCP Bridge
+
+```powershell
+npm start
+```
+
+With `MCP_TRANSPORT=http`, the bridge stays local on port `3100` by default.
+
+Test its health from another PowerShell window:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:3100/health
+```
+
+Test Ollama separately:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:11434/api/tags
+```
+
+## Run the Python Compiler
+
+```powershell
+python -m python_src.main
+```
+
+Before processing notes, the compiler checks that Ollama is reachable and that both required models are installed. It stops cleanly if the local model service is not ready.
+
+## Asset/Dream Operator Connection
+
+The separate `codex-plus-hermes-team` operator uses:
+
+```env
+ASSET_DREAM_MEMORY_BRIDGE_URL=http://127.0.0.1:3100
+ASSET_DREAM_MEMORY_BRIDGE_API_KEY=THE_SAME_VALUE_AS_MCP_API_KEY
+ASSET_DREAM_MEMORY_ROOT=Projects/asset-dream
+
+OLLAMA_ENABLED=true
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_CHAT_MODEL=llama3.2:1b
+OLLAMA_EMBED_MODEL=mxbai-embed-large:latest
+```
+
+The operator exposes only project-scoped memory operations for `asset-dream:*` workers: health, search, read, and proposal creation.
+
+## Security
+
+- `.env` is ignored and must remain local.
+- The MCP HTTP transport should stay on localhost/private networking.
+- Do not expose Ollama port `11434` directly to the public internet.
+- Do not expose MCP port `3100` publicly without an authenticated private tunnel.
+- Any secrets that were committed to Git history before `.env` was removed should be treated as exposed and rotated.
+
+## Tests
+
+```powershell
+python -m unittest discover -s tests -v
+npm run typecheck
+npm test
+npm run build
+```
