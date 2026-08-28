@@ -34,22 +34,26 @@ class ConfigTests(unittest.TestCase):
 
 class HealthTests(unittest.TestCase):
     def test_health_reports_missing_models_without_raising(self):
-        import python_src.health as health
+        with patch.dict(os.environ, {}, clear=True):
+            import python_src.config as config
+            importlib.reload(config)
+            import python_src.health as health
+            importlib.reload(health)
 
-        payload = json.dumps({"models": [{"name": "llama3.2:1b"}]}).encode("utf-8")
+            payload = json.dumps({"models": [{"name": "llama3.2:1b"}]}).encode("utf-8")
 
-        class Response:
-            def __enter__(self):
-                return self
+            class Response:
+                def __enter__(self):
+                    return self
 
-            def __exit__(self, exc_type, exc, tb):
-                return False
+                def __exit__(self, exc_type, exc, tb):
+                    return False
 
-            def read(self):
-                return payload
+                def read(self):
+                    return payload
 
-        with patch("python_src.health.urllib.request.urlopen", return_value=Response()):
-            result = health.check_ollama_health()
+            with patch("python_src.health.urllib.request.urlopen", return_value=Response()):
+                result = health.check_ollama_health()
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["chat_model"], "llama3.2:1b")
